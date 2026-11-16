@@ -44,6 +44,11 @@ const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}},lsSet=
 KEY=lsGet('chave')||'';
 const $=i=>document.getElementById(i),n=i=>{const v=parseFloat($(i).value);return isNaN(v)?null:v};
 const now=()=>new Date().toTimeString().slice(0,5);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let XT={E:[],S:[]};
+function renderX(t){const c=$('x_'+t);if(!c)return;c.innerHTML=XT[t].map((x,i)=>`<div class="row" style="margin-top:6px"><input style="flex:2;min-width:120px" placeholder="${t=='E'?'Nome da entrada (ex.: Dieta enteral)':'Nome da saída (ex.: Dreno de tórax)'}" value="${esc(x.nome)}" oninput="XT['${t}'][${i}].nome=this.value"><input style="flex:1;min-width:80px" type="number" step="any" inputmode="decimal" placeholder="mL" value="${esc(x.ml)}" oninput="XT['${t}'][${i}].ml=this.value"><button onclick="rmX('${t}',${i})" title="Remover">✕</button></div>`).join('')}
+function addX(t){XT[t].push({nome:'',ml:''});renderX(t);const c=$('x_'+t).querySelector('.row:last-child input');if(c)c.focus()}
+function rmX(t,i){XT[t].splice(i,1);renderX(t)}
 function msg(t,c){cl();modal(c||'#d32f2f','Aviso',`<p style="white-space:pre-wrap">${String(t).replace(/</g,'&lt;')}</p><button class="p" style="width:100%" onclick="cl()">OK</button>`)}
 async function api(fn,args){const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),25000);
  try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({k:KEY,fn,args}),signal:ac.signal});const j=await r.json();if(!j.ok)throw new Error(j.error||'Erro');return j.data}finally{clearTimeout(tm)}}
@@ -78,7 +83,7 @@ const REC=[
 ['Risco alto (≥7)','EMERGÊNCIA: acionar equipe de resposta rápida/intensivista imediatamente.','Monitorização contínua; avaliar transferência para UTI.']];
 const pt=()=>S.p.find(p=>p.id==V.id);
 const lastV=p=>(p.vit||[])[(p.vit||[]).length-1];
-function go(v,id){V.v=v;if(id)V.id=id;R()}
+function go(v,id){if(v!='pt'||(id&&id!=V.id))XT={E:[],S:[]};V.v=v;if(id)V.id=id;R()}
 function R(){const a=$('app');$('back').style.display=V.v=='home'?'none':'';
  if(V.v=='home'||!pt()){V.v='home';home(a)}else detail(a)}
 function badge(p){const v=lastV(p);if(!v)return'<span class="b ln">—</span>';return`<span class="b ${LC[Math.max(0,lvl(v.tot,v.any3))]}">${v.tot}</span>`}
@@ -100,16 +105,19 @@ function detail(a){const p=pt();$('ttl').innerHTML=`${p.ini} · Leito ${p.leito}
  <div class="grid" style="margin-top:8px"><div><label>O₂ suplementar</label><select id="o2"><option value="0">Ar ambiente</option><option value="1">Em uso de O₂</option></select></div><div><label>Escala SpO₂</label><select id="esc"><option value="1">1 (padrão)</option><option value="2">2 (hipercapnia)</option></select></div><div><label>Consciência</label><select id="cv"><option value="0">Alerta</option><option value="1">Confuso/Voz/Dor/Não resp.</option></select></div><div><label>Rubrica</label><input id="rub" maxlength="8" value="${lsGet('rub')||''}"></div></div>
  <button class="p" style="width:100%;margin-top:10px" onclick="regV()">Registrar e calcular NEWS2</button></div>
  <div class="card"><h2>Histórico NEWS2</h2>${vit.length?`<div class="scroll"><table><tr><th>Hora</th><th>T</th><th>FR</th><th>FC</th><th>PA</th><th>PAM</th><th>SpO₂</th><th>HGT</th><th>NEWS2</th></tr>${vit.slice().reverse().map(x=>`<tr><td>${x.h}</td><td>${x.t}</td><td>${x.fr}</td><td>${x.fc}</td><td>${x.pas}/${x.pad}</td><td>${x.pam}</td><td>${x.sp}</td><td class="${x.hgt!=null&&(x.hgt<70||x.hgt>180)?'bad':''}">${x.hgt==null?'—':x.hgt}</td><td><span class="b ${LC[Math.max(0,lvl(x.tot,x.any3))]}" style="padding:2px 8px;min-width:0">${x.tot}</span></td></tr>`).join('')}</table></div>`:'<p class="mu">Sem registros.</p>'}</div>
- <div class="card"><h2>Balanço hídrico (mL)</h2><label>Infundido</label><div class="grid">${I.map(([i,l])=>f('b_'+i,l)).join('')}</div><label style="margin-top:8px">Eliminado</label><div class="grid">${E.map(([i,l])=>f('b_'+i,l)).join('')}</div>
+ <div class="card"><h2>Balanço hídrico (mL)</h2><label>Infundido</label><div class="grid">${I.map(([i,l])=>f('b_'+i,l)).join('')}</div><div id="x_E"></div><button onclick="addX('E')" style="margin-top:6px">+ Adicionar entrada</button><label style="margin-top:10px">Eliminado</label><div class="grid">${E.map(([i,l])=>f('b_'+i,l)).join('')}</div><div id="x_S"></div><button onclick="addX('S')" style="margin-top:6px">+ Adicionar saída</button>
  <button class="p" style="width:100%;margin:10px 0" onclick="regB()">Adicionar lançamento</button>
  <div class="tot"><div>Infundido<b>${inf}</b></div><div>Eliminado<b>${eli}</b></div><div>Diurese<b>${sum('diu')}</b></div><div>Balanço<b>${inf-eli>0?'+':''}${inf-eli}</b></div></div>
- ${bal.length?`<div class="scroll" style="margin-top:8px"><table><tr><th>Hora</th><th>Infund.</th><th>Elim.</th><th>Diurese</th><th>Parcial</th></tr>${bal.slice().reverse().map(b=>`<tr><td>${b.h}</td><td>${b.inf}</td><td>${b.eli}</td><td>${b.diu||0}</td><td>${b.inf-b.eli}</td></tr>`).join('')}</table></div>`:''}</div>
+ ${bal.length?`<div class="scroll" style="margin-top:8px"><table><tr><th>Hora</th><th>Infund.</th><th>Elim.</th><th>Diurese</th><th>Parcial</th><th>Outros</th></tr>${bal.slice().reverse().map(b=>`<tr><td>${b.h}</td><td>${b.inf}</td><td>${b.eli}</td><td>${b.diu||0}</td><td>${b.inf-b.eli}</td><td style="white-space:normal;text-align:left">${(b.itens||[]).map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; ')}</td></tr>`).join('')}</table></div>`:''}</div>
  <button onclick="alta()" style="width:100%">Dar alta / remover paciente</button>`;
- window._I=I;window._E=E}
+ window._I=I;window._E=E;renderX('E');renderX('S')}
 function chS(s){call('setSetor',[V.id,s],()=>load())}
 function alta(){const p=pt();modal('#d32f2f','Remover paciente?',`<p>${p.ini} · Leito ${p.leito} e todos os registros serão apagados${SH?' para toda a equipe':''}.</p><div class="row"><button class="sp" onclick="cl()">Cancelar</button><button class="p sp" style="background:var(--r);border-color:var(--r)" onclick="del()">Remover</button></div>`)}
 function del(){call('removePatient',[V.id],()=>{cl();V.v='home';load()})}
-function regB(){const g=a=>a.reduce((s,[i])=>s+(n('b_'+i)||0),0),x={inf:g(_I),eli:g(_E),diu:n('b_diu')||0};if(!x.inf&&!x.eli)return;call('addBalance',[V.id,x],()=>load())}
+function regB(){const g=a=>a.reduce((s,[i])=>s+(n('b_'+i)||0),0),itens=[];
+ ['E','S'].forEach(t=>XT[t].forEach(x=>{const ml=parseFloat(x.ml);if(!isNaN(ml)&&ml>0)itens.push({t,nome:String(x.nome||'').trim().slice(0,30)||(t=='E'?'Outra entrada':'Outra saída'),ml})}));
+ const so=t=>itens.filter(i=>i.t==t).reduce((s,i)=>s+i.ml,0),x={inf:g(_I)+so('E'),eli:g(_E)+so('S'),diu:n('b_diu')||0,itens};
+ if(!x.inf&&!x.eli)return;call('addBalance',[V.id,x],()=>{XT={E:[],S:[]};load()})}
 function regV(){const p=pt(),x={t:n('t'),fr:n('fr'),fc:n('fc'),pas:n('pas'),pad:n('pad'),sp:n('sp'),o2:$('o2').value=='1',esc:+$('esc').value,cv:$('cv').value=='1',hgt:n('hgt'),rub:$('rub').value.trim()};
  if([x.t,x.fr,x.fc,x.pas,x.pad,x.sp].some(v=>v===null)){msg('Preencha todos os sinais vitais.','#c98f00');return}
  lsSet('rub',x.rub);const r=news(x);
@@ -122,10 +130,10 @@ function sheet(){const [tn,a,b]=TURNOS[+$('pt_t').value],st=$('pt_s').value,nm=$
  const inS=ts=>{if(!ts||ts<lim)return false;const h=new Date(ts).getHours();return a<b?h>=a&&h<b:h>=a||h<b};
  const L=S.p.filter(p=>st=='Todos'||p.setor==st);
  return`<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:8px"><img src="${LOGO}" alt="HOSPESC"><div><b style="font-size:15px">Balanço hídrico + NEWS2 — ${tn}</b><br>Setor: ${st} · Impresso em ${new Date().toLocaleString('pt-BR')}</div></div>`+
- (L.map(p=>{const v=(p.vit||[]).filter(x=>inS(x.ts)),bl=(p.bal||[]).filter(x=>inS(x.ts)),I=bl.reduce((s,x)=>s+x.inf,0),E=bl.reduce((s,x)=>s+x.eli,0),D=bl.reduce((s,x)=>s+(x.diu||0),0);
+ (L.map(p=>{const v=(p.vit||[]).filter(x=>inS(x.ts)),bl=(p.bal||[]).filter(x=>inS(x.ts)),I=bl.reduce((s,x)=>s+x.inf,0),E=bl.reduce((s,x)=>s+x.eli,0),D=bl.reduce((s,x)=>s+(x.diu||0),0),O=bl.flatMap(x=>x.itens||[]);
   return`<div class="pp"><b>${p.ini} · Leito ${p.leito} · ${p.setor}</b>`+
   (v.length?`<table style="width:100%;border-collapse:collapse"><tr><th>Hora</th><th>T</th><th>FR</th><th>FC</th><th>PA</th><th>PAM</th><th>SpO₂</th><th>HGT</th><th>NEWS2</th><th>Rubrica</th></tr>${v.map(x=>`<tr><td>${x.h}</td><td>${x.t}</td><td>${x.fr}</td><td>${x.fc}</td><td>${x.pas}/${x.pad}</td><td>${x.pam}</td><td>${x.sp}</td><td>${x.hgt==null?'':x.hgt}</td><td>${x.tot}</td><td>${x.rub||''}</td></tr>`).join('')}</table>`:'<div>Sem sinais vitais no turno.</div>')+
-  `<div style="margin-top:3px">Infundido: <b>${I}</b> mL · Eliminado: <b>${E}</b> mL (diurese ${D} mL) · Balanço do turno: <b>${I-E>0?'+':''}${I-E}</b> mL</div></div>`}).join('')||'<p>Nenhum paciente.</p>')+`<div style="display:flex;gap:28px;margin-top:8px;break-inside:avoid"><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">${nm.replace(/</g,'&lt;')||'Nome e COREN do profissional'}</div><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">Assinatura</div></div>`}
+  `<div style="margin-top:3px">Infundido: <b>${I}</b> mL · Eliminado: <b>${E}</b> mL (diurese ${D} mL) · Balanço do turno: <b>${I-E>0?'+':''}${I-E}</b> mL${O.length?'<br>Outros: '+O.map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; '):''}</div></div>`}).join('')||'<p>Nenhum paciente.</p>')+`<div style="display:flex;gap:28px;margin-top:8px;break-inside:avoid"><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">${nm.replace(/</g,'&lt;')||'Nome e COREN do profissional'}</div><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">Assinatura</div></div>`}
 function doPrint(){const h=sheet();cl();$('pr').innerHTML=h;try{window.print()}catch(e){alert('Impressão indisponível aqui. Use “Salvar p/ imprimir”.')}}
 async function svF(){const h=sheet();cl();try{const d=await claude.use('downloads');if(!d)throw 0;await d.save({filename:'turno-hospesc.html',data:`<!DOCTYPE html><meta charset="utf-8"><title>Turno HOSPESC</title><style>body{font:12px sans-serif;margin:16px}img{height:44px}td,th{border:1px solid #999;padding:2px 4px;font-size:11px}.pp{margin-bottom:12px;break-inside:avoid}</style><button onclick="print()" style="margin-bottom:10px;padding:8px 14px">🖨 Imprimir</button><style media="print">button{display:none}</style>${h}<script>setTimeout(()=>print(),500)<\/script>`})}catch(e){alert('Salvar arquivo indisponível aqui. Tente “Imprimir”.')}}
 load();
