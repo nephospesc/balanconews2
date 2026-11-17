@@ -52,13 +52,12 @@ function addX(t){XT[t].push({nome:'',ml:''});renderX(t);const c=$('x_'+t).queryS
 function rmX(t,i){XT[t].splice(i,1);renderX(t)}
 function msg(t,c){cl();modal(c||'#d32f2f','Aviso',`<p style="white-space:pre-wrap">${String(t).replace(/</g,'&lt;')}</p><button class="p" style="width:100%" onclick="cl()">OK</button>`)}
 async function api(fn,args){const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),25000);
- try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({k:KEY,fn,args}),signal:ac.signal});const j=await r.json();if(!j.ok)throw new Error(j.error||'Erro');return j.data}finally{clearTimeout(tm)}}
-function badKey(e){if(/inválido/.test(e.message)){KEY='';lsSet('chave','');askKey();return true}return false}
+ try{const r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({fn,args}),signal:ac.signal});const j=await r.json();if(!j.ok)throw new Error(j.error||'Erro');return j.data}finally{clearTimeout(tm)}}
+function badKey(e){return false}
 function call(fn,args,ok){if(BUSY){msg('Aguarde: ainda salvando o registro anterior.','#c98f00');return}BUSY=1;$('toast').style.display='block';api(fn,args).then(r=>{BUSY=0;$('toast').style.display='none';ok&&ok(r)}).catch(e=>{BUSY=0;$('toast').style.display='none';if(!badKey(e))msg('Não foi possível salvar. Verifique a internet e tente de novo.\n('+e.message+')')})}
 function askKey(){cl();modal('#0b5cab','Código de acesso',`<p class="mu">Digite o código de acesso da equipe (fornecido pela CM).</p><input id="kk" type="password" autocomplete="off"><button class="p" style="width:100%;margin-top:10px" onclick="setKey()">Entrar</button>`)}
 function setKey(){KEY=$('kk').value.trim();lsSet('chave',KEY);cl();load()}
 function load(cb){if(API.indexOf('COLE')==0){$('app').innerHTML='<div class="card"><b>Falta configurar o link do servidor.</b><p class="mu">Edite o arquivo index.html no GitHub e troque COLE_AQUI_O_LINK_DO_SERVIDOR pelo link /exec do Apps Script.</p></div>';return}
- if(!KEY){if(!$('ov'))askKey();return}
  if(LOADING)return;LOADING=1;
  api('getAll',[]).then(d=>{LOADING=0;S.p=d;MODE='sincronizado '+now();soft();cb&&cb()}).catch(e=>{LOADING=0;if(!badKey(e)){MODE='sem conexão';soft()}})}
 function soft(){const a=document.activeElement;if($('ov')||(a&&$('app').contains(a)&&/INPUT|SELECT/.test(a.tagName))){PEND=1;return}R()}
@@ -93,7 +92,7 @@ function home(a){$('ttl').innerHTML=`Balanço hídrico + NEWS2<small>HOSPESC · 
  const L=S.p.filter(p=>V.f=='Todos'||p.setor==V.f);
  a.innerHTML=`<div class="row" style="margin-bottom:10px"><select onchange="V.f=this.value;R()" style="flex:1">${['Todos',...SETORES].map(s=>`<option ${s==V.f?'selected':''}>${s}</option>`).join('')}</select><button class="p" onclick="addP()">+ Paciente</button><button onclick="prt()">🖨 Turno</button></div>`+
  (L.length?L.map(p=>`<div class="card pt" onclick="go('pt','${p.id}')"><div class="sp"><div class="ini">${p.ini}</div><div class="mu">Leito ${p.leito} · ${p.setor}</div></div>${badge(p)}</div>`).join(''):'<p class="mu">Nenhum paciente neste setor. Toque em “+ Paciente”.</p>')+
- `<p class="mu">${SH?'Dados compartilhados com a equipe convidada. ':'Dados só neste aparelho. '}Use apenas iniciais. Não substitui o julgamento clínico nem o prontuário.</p>`}
+ `<p class="mu">${SH?'Dados compartilhados com a equipe convidada. ':'Dados só neste aparelho. '}Use apenas iniciais. Não substitui o julgamento clínico nem o prontuário. (versão 16/11-c)</p>`}
 function modal(c,t,h){const d=document.createElement('div');d.className='ov';d.id='ov';d.innerHTML=`<div class="md"><div class="h" style="background:${c}">${t}</div><div class="c">${h}</div></div>`;document.body.appendChild(d)}
 function cl(){const o=$('ov');if(o)o.remove();if(PEND){PEND=0;R()}}
 function addP(){modal('#0b5cab','Novo paciente',`<div class="grid"><div><label>Iniciais</label><input id="ni" maxlength="5" placeholder="M.S.A."></div><div><label>Leito</label><input id="nl"></div></div><label style="margin-top:8px">Setor</label><select id="ns">${SETORES.map(s=>`<option>${s}</option>`).join('')}</select><div class="row" style="margin-top:12px"><button class="sp" onclick="cl()">Cancelar</button><button class="p sp" onclick="sv()">Salvar</button></div>`)}
