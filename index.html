@@ -42,7 +42,7 @@ const TURNOS=[['Diurno (07–19)',7,19],['Noturno (19–07)',19,7]];
 let S={p:[]},SRV=[],V={v:'home',id:null,f:'Todos'},PEND=0,MODE='conectando…',LOADING=0,SENDING=0,LASTH='',RT=0;
 const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}},lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
 const jp=(k,d)=>{try{return JSON.parse(lsGet(k)||d)}catch(e){return JSON.parse(d)}};
-let Q=jp('fila','[]'),DR=jp('rasc','{}');SRV=jp('cache','[]');
+let Q=jp('fila','[]'),DR=jp('rasc','{}');SRV=jp('cache','[]');let TOK=lsGet('tok')||'',USR=jp('usr','null');
 const saveQ=()=>lsSet('fila',JSON.stringify(Q)),saveDR=()=>lsSet('rasc',JSON.stringify(DR));
 const $=i=>document.getElementById(i),n=i=>{const v=parseFloat($(i).value);return isNaN(v)?null:v};
 const now=()=>new Date().toTimeString().slice(0,5);
@@ -54,26 +54,27 @@ function renderX(t){const c=$('x_'+t);if(!c)return;c.innerHTML=XT[t].map((x,i)=>
 function addX(t){XT[t].push({nome:'',ml:''});sx();renderX(t);const c=$('x_'+t).querySelector('.row:last-child input');if(c)c.focus()}
 function rmX(t,i){XT[t].splice(i,1);sx();renderX(t)}
 function msg(t,c){cl();modal(c||'#d32f2f','Aviso',`<p style="white-space:pre-wrap">${String(t).replace(/</g,'&lt;')}</p><button class="p" style="width:100%" onclick="cl()">OK</button>`)}
-const st=()=>Q.length?`⏳ ${Q.length} pendente(s) · envio automático`:MODE;
+const st=()=>Q.length?(Q[0].by&&USR&&Q[0].by!==USR.registro?'⚠ pendências de outro profissional neste aparelho':`⏳ ${Q.length} pendente(s) · envio automático`):MODE;
 /* rascunho: o que foi digitado fica guardado no aparelho até ser registrado */
 function onDraft(e){const el=e.target;if(V.v=='pt'&&el.id&&$('app').contains(el)){(DR[V.id]=DR[V.id]||{})[el.id]=el.value;saveDR()}}
 document.addEventListener('input',onDraft);document.addEventListener('change',onDraft);
 function clearDraft(pid,test){const d=DR[pid];if(!d)return;Object.keys(d).forEach(k=>{if(test(k))delete d[k]});saveDR()}
 /* servidor */
 async function api(fn,args){const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),30000);
- try{let r;try{r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({fn,args}),signal:ac.signal})}catch(e){const x=new Error('sem conexão');x.net=1;throw x}
+ try{let r;try{r=await fetch(API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({fn,args,t:TOK}),signal:ac.signal})}catch(e){const x=new Error('sem conexão');x.net=1;throw x}
   let j;try{j=await r.json()}catch(e){const x=new Error('resposta inválida do servidor');x.net=1;throw x}
-  if(!j.ok)throw new Error(j.error||'Erro');return j.data}finally{clearTimeout(tm)}}
+  if(!j.ok){const x=new Error(String(j.error||'Erro').replace(/^AUTH:\s*/,''));if(/^AUTH:/.test(j.error))x.auth=1;throw x}return j.data}finally{clearTimeout(tm)}}
 /* fila de envio: tudo é salvo primeiro no aparelho e enviado em segundo plano, com nova tentativa automática */
-function enq(o){Q.push(o);saveQ();rebuild(1);pump()}
-async function pump(){if(SENDING||!Q.length)return;SENDING=1;
+function enq(o){o.by=USR?USR.registro:'';Q.push(o);saveQ();rebuild(1);pump()}
+async function pump(){if(SENDING||!Q.length||!TOK)return;SENDING=1;
  while(Q.length){const o=Q[0];
+  if(o.by&&USR&&o.by!==USR.registro){SENDING=0;MODE='pendências de outro profissional';rebuild();return}
   try{await api(o.fn,o.args);Q.shift();saveQ()}
-  catch(e){if(e.net){SENDING=0;MODE='sem conexão';rebuild();clearTimeout(RT);RT=setTimeout(pump,8000);return}
+  catch(e){if(e.auth){SENDING=0;authLost();return}if(e.net){SENDING=0;MODE='sem conexão';rebuild();clearTimeout(RT);RT=setTimeout(pump,8000);return}
    Q.shift();saveQ();rebuild(1);msg('Um registro não pôde ser salvo no servidor: '+e.message)}}
  SENDING=0;load()}
 function mkV(o,old){const x=o.x,full=[x.t,x.fr,x.fc,x.pas,x.sp].every(v=>v!=null),r=full?news(x):null;
- return{rid:o.rid,ts:old?old.ts:o.ts,h:old?old.h:o.h,t:x.t,fr:x.fr,fc:x.fc,pas:x.pas,pad:x.pad,pam:(x.pas!=null&&x.pad!=null)?Math.round((x.pas+2*x.pad)/3):null,sp:x.sp,hgt:x.hgt,o2:x.o2,esc:x.esc,cv:x.cv,tot:r?r.tot:null,any3:r?r.any3:false,rub:x.rub||'',pend:1}}
+ return{rid:o.rid,ts:old?old.ts:o.ts,h:old?old.h:o.h,t:x.t,fr:x.fr,fc:x.fc,pas:x.pas,pad:x.pad,pam:(x.pas!=null&&x.pad!=null)?Math.round((x.pas+2*x.pad)/3):null,sp:x.sp,hgt:x.hgt,o2:x.o2,esc:x.esc,cv:x.cv,tot:r?r.tot:null,any3:r?r.any3:false,rub:x.rub||'',por:old?old.por:o.por,ed:old?'editado agora':'',pend:1}}
 function applyOp(P,o){const p=P.find(q=>q.id==o.pid);
  if(o.op=='addP'){if(!p)P.push({id:o.pid,ini:o.a.ini,leito:o.a.leito,setor:o.a.setor,vit:[],bal:[],pend:1});return}
  if(!p)return;
@@ -82,14 +83,15 @@ function applyOp(P,o){const p=P.find(q=>q.id==o.pid);
  else if(o.op=='addV'){if(!p.vit.some(r=>r.rid==o.rid))p.vit.push(mkV(o))}
  else if(o.op=='updV'){const r=p.vit.find(r=>r.rid==o.rid);if(r)Object.assign(r,mkV(o,r))}
  else if(o.op=='delV')p.vit=p.vit.filter(r=>r.rid!=o.rid);
- else if(o.op=='addB'){if(!p.bal.some(r=>r.rid==o.rid))p.bal.push({rid:o.rid,ts:o.ts,h:o.h,inf:o.x.inf,eli:o.x.eli,diu:o.x.diu||0,itens:o.x.itens||[],pend:1})}
- else if(o.op=='updB'){const r=p.bal.find(r=>r.rid==o.rid);if(r)Object.assign(r,{inf:o.x.inf,eli:o.x.eli,diu:o.x.diu||0,pend:1})}
+ else if(o.op=='addB'){if(!p.bal.some(r=>r.rid==o.rid))p.bal.push({rid:o.rid,ts:o.ts,h:o.h,inf:o.x.inf,eli:o.x.eli,diu:o.x.diu||0,itens:o.x.itens||[],por:o.por,ed:'',pend:1})}
+ else if(o.op=='updB'){const r=p.bal.find(r=>r.rid==o.rid);if(r)Object.assign(r,{inf:o.x.inf,eli:o.x.eli,diu:o.x.diu||0,ed:'editado agora',pend:1})}
  else if(o.op=='delB')p.bal=p.bal.filter(r=>r.rid!=o.rid)}
 function rebuild(f){const P=JSON.parse(JSON.stringify(SRV));Q.forEach(o=>applyOp(P,o));S.p=P;
  const h=JSON.stringify(P)+Q.length+MODE.split(' ')[0];if(f||h!==LASTH){LASTH=h;f?R():soft()}}
 function load(){if(API.indexOf('COLE')==0){$('app').innerHTML='<div class="card"><b>Falta configurar o link do servidor.</b><p class="mu">Edite o arquivo index.html no GitHub e troque COLE_AQUI_O_LINK_DO_SERVIDOR pelo link /exec do Apps Script.</p></div>';return}
+ if(!TOK){if(!$('lg_box'))R();return}
  if(LOADING||SENDING)return;LOADING=1;
- api('getAll',[]).then(d=>{LOADING=0;SRV=d;lsSet('cache',JSON.stringify(d));MODE='sincronizado '+now();rebuild()}).catch(e=>{LOADING=0;MODE='sem conexão';rebuild()})}
+ api('getAll',[]).then(d=>{LOADING=0;SRV=d;lsSet('cache',JSON.stringify(d));MODE='sincronizado '+now();rebuild()}).catch(e=>{LOADING=0;if(e.auth){authLost();return}MODE='sem conexão';rebuild()})}
 function soft(){const a=document.activeElement;if($('ov')||(a&&$('app').contains(a)&&/INPUT|SELECT/.test(a.tagName))){PEND=1;return}R()}
 document.addEventListener('focusout',()=>setTimeout(()=>{const a=document.activeElement;if(PEND&&!$('ov')&&!(a&&/INPUT|SELECT/.test(a.tagName))){PEND=0;R()}},50));
 setInterval(()=>{if(!document.hidden&&!Q.length)load()},15000);
@@ -115,15 +117,15 @@ const REC=[
 const pt=()=>S.p.find(p=>p.id==V.id);
 const lastV=p=>(p.vit||[])[(p.vit||[]).length-1];
 function go(v,id){if(v!='pt'||(id&&id!=V.id))XT={E:[],S:[]};V.v=v;if(id)V.id=id;R()}
-function R(){const a=$('app');$('back').style.display=V.v=='home'?'none':'';
+function R(){if(!TOK){if(!$('lg_box'))loginView();return}const a=$('app');$('back').style.display=V.v=='home'?'none':'';
  if(V.v=='home'||!pt()){V.v='home';home(a)}else detail(a)}
 function badge(p){const v=(p.vit||[]).filter(x=>x.tot!=null).pop();if(!v)return'<span class="b ln">—</span>';return`<span class="b ${LC[Math.max(0,lvl(v.tot,v.any3))]}">${v.tot}</span>`}
 
 function home(a){$('ttl').innerHTML=`Balanço hídrico + NEWS2<small>HOSPESC · CM · ● ${st()}</small>`;
  const L=S.p.filter(p=>V.f=='Todos'||p.setor==V.f);
- a.innerHTML=`<div class="row" style="margin-bottom:10px"><select onchange="V.f=this.value;R()" style="flex:1">${['Todos',...SETORES].map(s=>`<option ${s==V.f?'selected':''}>${s}</option>`).join('')}</select><button class="p" onclick="addP()">+ Paciente</button><button onclick="prt()">🖨 Turno</button></div>`+
+ a.innerHTML=`<div class="row mu" style="margin-bottom:8px"><span class="sp">👤 ${esc(USR?USR.nome:'')} · ${esc(USR?USR.registro:'')}</span>${USR&&USR.perfil=='admin'?'<button onclick="adm()">Usuários</button><button onclick="aud()">Auditoria</button>':''}<button onclick="logout()">Sair</button></div><div class="row" style="margin-bottom:10px"><select onchange="V.f=this.value;R()" style="flex:1">${['Todos',...SETORES].map(s=>`<option ${s==V.f?'selected':''}>${s}</option>`).join('')}</select><button class="p" onclick="addP()">+ Paciente</button><button onclick="prt()">🖨 Turno</button></div>`+
  (L.length?L.map(p=>`<div class="card pt" onclick="go('pt','${p.id}')"><div class="sp"><div class="ini">${p.ini}</div><div class="mu">Leito ${p.leito} · ${p.setor}</div></div>${badge(p)}</div>`).join(''):'<p class="mu">Nenhum paciente neste setor. Toque em “+ Paciente”.</p>')+
- `<p class="mu">${SH?'Dados compartilhados com a equipe convidada. ':'Dados só neste aparelho. '}Use apenas iniciais. Não substitui o julgamento clínico nem o prontuário. (versão 16/11-e)</p>`}
+ `<p class="mu">${SH?'Dados compartilhados com a equipe convidada. ':'Dados só neste aparelho. '}Use apenas iniciais. Não substitui o julgamento clínico nem o prontuário. (versão 23/11-f)</p>`}
 function modal(c,t,h){const d=document.createElement('div');d.className='ov';d.id='ov';d.innerHTML=`<div class="md"><div class="h" style="background:${c}">${t}</div><div class="c">${h}</div></div>`;document.body.appendChild(d)}
 function cl(){const o=$('ov');if(o)o.remove();if(PEND){PEND=0;R()}}
 function addP(){modal('#0b5cab','Novo paciente',`<div class="grid"><div><label>Iniciais</label><input id="ni" maxlength="5" placeholder="M.S.A."></div><div><label>Leito</label><input id="nl"></div></div><label style="margin-top:8px">Setor</label><select id="ns">${SETORES.map(s=>`<option>${s}</option>`).join('')}</select><div class="row" style="margin-top:12px"><button class="sp" onclick="cl()">Cancelar</button><button class="p sp" onclick="sv()">Salvar</button></div>`)}
@@ -133,16 +135,49 @@ function detail(a){const p=pt();XT=(DR[p.id]||{}).XT||{E:[],S:[]};$('ttl').inner
  const bal=p.bal||[],vit=p.vit||[],sum=k=>bal.reduce((s,b)=>s+(b[k]||0),0),inf=sum('inf'),eli=sum('eli');
  a.innerHTML=`<div class="card row"><span class="mu">Setor</span><select onchange="chS(this.value)" class="sp">${(SETORES.includes(p.setor)?SETORES:[p.setor,...SETORES]).map(s=>`<option ${s==p.setor?'selected':''}>${s}</option>`).join('')}</select>${badge(p)}</div>
  <div class="card"><h2>Registrar sinais vitais</h2><div class="grid">${f('t','Temp °C','36.5')}${f('fr','FR irpm')}${f('fc','FC bpm')}${f('pas','PAS')}${f('pad','PAD')}${f('sp','SpO₂ %')}${f('hgt','HGT mg/dL')}</div>
- <div class="grid" style="margin-top:8px"><div><label>O₂ suplementar</label><select id="o2"><option value="0">Ar ambiente</option><option value="1">Em uso de O₂</option></select></div><div><label>Escala SpO₂</label><select id="esc"><option value="1">1 (padrão)</option><option value="2">2 (hipercapnia)</option></select></div><div><label>Consciência</label><select id="cv"><option value="0">Alerta</option><option value="1">Confuso/Voz/Dor/Não resp.</option></select></div><div><label>Rubrica</label><input id="rub" maxlength="8" value="${lsGet('rub')||''}"></div></div>
+ <div class="grid" style="margin-top:8px"><div><label>O₂ suplementar</label><select id="o2"><option value="0">Ar ambiente</option><option value="1">Em uso de O₂</option></select></div><div><label>Escala SpO₂</label><select id="esc"><option value="1">1 (padrão)</option><option value="2">2 (hipercapnia)</option></select></div><div><label>Consciência</label><select id="cv"><option value="0">Alerta</option><option value="1">Confuso/Voz/Dor/Não resp.</option></select></div><div><label>Rubrica</label><input id="rub" maxlength="8" value="${esc(rubDef())}"></div></div>
  <button class="p" style="width:100%;margin-top:10px" onclick="regV()">Registrar sinais vitais</button><p class="mu" style="margin:6px 0 0">Registre o que foi aferido. O NEWS2 só é calculado quando T, FR, FC, PAS e SpO₂ estiverem preenchidos.</p></div>
- <div class="card"><h2>Histórico NEWS2</h2>${vit.length?`<div class="scroll"><table><tr><th>Hora</th><th>T</th><th>FR</th><th>FC</th><th>PA</th><th>PAM</th><th>SpO₂</th><th>HGT</th><th>NEWS2</th><th></th></tr>${vit.slice().reverse().map(x=>`<tr><td>${x.h}${x.pend?' ⏳':''}</td><td>${z(x.t)}</td><td>${z(x.fr)}</td><td>${z(x.fc)}</td><td>${x.pas==null&&x.pad==null?'—':z(x.pas)+'/'+z(x.pad)}</td><td>${z(x.pam)}</td><td>${z(x.sp)}</td><td class="${x.hgt!=null&&(x.hgt<70||x.hgt>180)?'bad':''}">${x.hgt==null?'—':x.hgt}</td><td>${x.tot==null?'—':`<span class="b ${LC[Math.max(0,lvl(x.tot,x.any3))]}" style="padding:2px 8px;min-width:0">${x.tot}</span>`}</td><td>${x.rid?`<button onclick="editV('${x.rid}')" title="Editar" style="padding:3px 8px">✏️</button>`:''}</td></tr>`).join('')}</table></div>`:'<p class="mu">Sem registros.</p>'}</div>
+ <div class="card"><h2>Histórico NEWS2</h2>${vit.length?`<div class="scroll"><table><tr><th>Hora</th><th>T</th><th>FR</th><th>FC</th><th>PA</th><th>PAM</th><th>SpO₂</th><th>HGT</th><th>NEWS2</th><th></th></tr>${vit.slice().reverse().map(x=>`<tr><td>${x.h}${x.pend?' ⏳':''}${x.ed?' ✎':''}</td><td>${z(x.t)}</td><td>${z(x.fr)}</td><td>${z(x.fc)}</td><td>${x.pas==null&&x.pad==null?'—':z(x.pas)+'/'+z(x.pad)}</td><td>${z(x.pam)}</td><td>${z(x.sp)}</td><td class="${x.hgt!=null&&(x.hgt<70||x.hgt>180)?'bad':''}">${x.hgt==null?'—':x.hgt}</td><td>${x.tot==null?'—':`<span class="b ${LC[Math.max(0,lvl(x.tot,x.any3))]}" style="padding:2px 8px;min-width:0">${x.tot}</span>`}</td><td>${x.rid?`<button onclick="editV('${x.rid}')" title="Editar" style="padding:3px 8px">✏️</button>`:''}</td></tr>`).join('')}</table></div>`:'<p class="mu">Sem registros.</p>'}</div>
  <div class="card"><h2>Balanço hídrico (mL)</h2><label>Infundido</label><div class="grid">${I.map(([i,l])=>f('b_'+i,l)).join('')}</div><div id="x_E"></div><button onclick="addX('E')" style="margin-top:6px">+ Adicionar entrada</button><label style="margin-top:10px">Eliminado</label><div class="grid">${E.map(([i,l])=>f('b_'+i,l)).join('')}</div><div id="x_S"></div><button onclick="addX('S')" style="margin-top:6px">+ Adicionar saída</button>
  <button class="p" style="width:100%;margin:10px 0" onclick="regB()">Adicionar lançamento</button>
  <div class="tot"><div>Infundido<b>${inf}</b></div><div>Eliminado<b>${eli}</b></div><div>Diurese<b>${sum('diu')}</b></div><div>Balanço<b>${inf-eli>0?'+':''}${inf-eli}</b></div></div>
- ${bal.length?`<div class="scroll" style="margin-top:8px"><table><tr><th>Hora</th><th>Infund.</th><th>Elim.</th><th>Diurese</th><th>Parcial</th><th>Outros</th><th></th></tr>${bal.slice().reverse().map(b=>`<tr><td>${b.h}${b.pend?' ⏳':''}</td><td>${b.inf}</td><td>${b.eli}</td><td>${b.diu||0}</td><td>${b.inf-b.eli}</td><td style="white-space:normal;text-align:left">${(b.itens||[]).map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; ')}</td><td>${b.rid?`<button onclick="editB('${b.rid}')" title="Editar" style="padding:3px 8px">✏️</button>`:''}</td></tr>`).join('')}</table></div>`:''}</div>
+ ${bal.length?`<div class="scroll" style="margin-top:8px"><table><tr><th>Hora</th><th>Infund.</th><th>Elim.</th><th>Diurese</th><th>Parcial</th><th>Outros</th><th></th></tr>${bal.slice().reverse().map(b=>`<tr><td>${b.h}${b.pend?' ⏳':''}${b.ed?' ✎':''}</td><td>${b.inf}</td><td>${b.eli}</td><td>${b.diu||0}</td><td>${b.inf-b.eli}</td><td style="white-space:normal;text-align:left">${(b.itens||[]).map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; ')}</td><td>${b.rid?`<button onclick="editB('${b.rid}')" title="Editar" style="padding:3px 8px">✏️</button>`:''}</td></tr>`).join('')}</table></div>`:''}</div>
  <button class="p" onclick="prt('${p.id}')" style="width:100%;margin-bottom:8px">🖨 Imprimir folha deste paciente (prontuário)</button><button onclick="alta()" style="width:100%">Dar saída: alta / transferência</button>`;
  window._I=I;window._E=E;renderX('E');renderX('S');const d=DR[p.id]||{};Object.keys(d).forEach(k=>{if(k!='XT'){const el=$(k);if(el&&a.contains(el))el.value=d[k]}})}
 function alta(){const p=pt();modal('#5b6b7b','Saída do paciente',`<p><b>${p.ini} · Leito ${p.leito} · ${p.setor}</b></p><label>Motivo</label><select id="mo"><option>Alta</option><option>Transferência</option><option>Remoção (cadastro errado)</option></select><label style="margin-top:8px">Destino (opcional, para transferência)</label><input id="dst" maxlength="60" placeholder="Ex.: outro hospital, UTI, enfermaria"><p class="mu">O paciente sai da lista para toda a equipe. O histórico fica guardado na planilha. Para mudar de setor dentro do hospital, use o seletor de setor no topo.</p><div class="row"><button class="sp" onclick="cl()">Cancelar</button><button class="p sp" onclick="del()">Confirmar saída</button></div>`)}
+let LMODE='in';
+const me=()=>USR?USR.nome+' · '+USR.registro:'';
+const rubDef=()=>USR?USR.nome.split(' ').filter(Boolean).map(w=>w[0]).join('').slice(0,8):'';
+function loginView(msg){$('back').style.display='none';$('ttl').innerHTML='Acesso profissional<small>HOSPESC · CM</small>';
+ const inp=(id,l,t,ph,ac)=>`<label style="margin-top:8px">${l}</label><input id="${id}" type="${t||'text'}" placeholder="${ph||''}" autocomplete="${ac||'off'}">`;
+ $('app').innerHTML=`<div class="card" id="lg_box"><div class="row" style="margin-bottom:8px"><button class="sp ${LMODE=='in'?'p':''}" onclick="LMODE='in';loginView()">Entrar</button><button class="sp ${LMODE=='reg'?'p':''}" onclick="LMODE='reg';loginView()">Primeiro acesso</button></div>`+
+ (LMODE=='in'?`${inp('lg_reg','Registro no conselho (ex.: COREN-RN 123456)','text','COREN-RN 123456','username')}${inp('lg_pw','Senha','password','','current-password')}<button class="p" style="width:100%;margin-top:12px" id="lg_btn" onclick="doLogin()">Entrar</button>`
+ :`<p class="mu">Crie sua senha de acesso. Informe o nome completo e o registro no conselho profissional (COREN, CRM etc.). Seu nome e registro ficam gravados em cada lançamento e alteração.</p>${inp('rg_nome','Nome completo','text','','name')}${inp('rg_reg','Registro no conselho (ex.: COREN-RN 123456)','text','','off')}${inp('rg_pw','Crie uma senha (mínimo 8 caracteres)','password','','new-password')}${inp('rg_pw2','Repita a senha','password','','new-password')}<button class="p" style="width:100%;margin-top:12px" id="lg_btn" onclick="doReg()">Criar acesso</button>`)+
+ `<p id="lg_msg" style="color:var(--r);margin:10px 0 0">${esc(msg||'')}</p></div>`}
+const lgMsg=(t,ok)=>{const e=$('lg_msg');if(e){e.style.color=ok?'var(--g)':'var(--r)';e.textContent=t}};
+function doLogin(reg,pw){reg=reg||$('lg_reg').value.trim();pw=pw||$('lg_pw').value;if(!reg||!pw){lgMsg('Informe o registro e a senha.');return}
+ const b=$('lg_btn');if(b){b.disabled=true;b.textContent='Entrando…'}
+ api('login',[reg,pw]).then(r=>{TOK=r.token;USR={nome:r.nome,registro:r.registro,perfil:r.perfil};lsSet('tok',TOK);lsSet('usr',JSON.stringify(USR));MODE='conectando…';R();load();pump()})
+ .catch(e=>{lgMsg(e.net?'Sem conexão com o servidor. Tente de novo.':e.message);const b=$('lg_btn');if(b){b.disabled=false;b.textContent='Entrar'}})}
+function doReg(){const nome=$('rg_nome').value.trim().replace(/\s+/g,' '),reg=$('rg_reg').value.trim(),p1=$('rg_pw').value,p2=$('rg_pw2').value;
+ if(nome.split(' ').filter(w=>w.length>=2).length<2){lgMsg('Informe o nome completo (nome e sobrenome).');return}
+ if(reg.replace(/[^A-Za-z0-9]/g,'').length<4||!/\d/.test(reg)){lgMsg('Informe o registro no conselho com o número (ex.: COREN-RN 123456).');return}
+ if(p1.length<8){lgMsg('A senha precisa ter pelo menos 8 caracteres.');return}
+ if(p1!==p2){lgMsg('As senhas não conferem.');return}
+ const b=$('lg_btn');b.disabled=true;b.textContent='Criando…';
+ api('registrar',[nome,reg,p1]).then(r=>{if(r.status=='ativo')doLogin(reg,p1);else{LMODE='in';loginView();lgMsg('Cadastro enviado. Quando a coordenação aprovar, entre com o registro e a senha criada.',1)}})
+ .catch(e=>{lgMsg(e.net?'Sem conexão com o servidor.':e.message);b.disabled=false;b.textContent='Criar acesso'})}
+function authLost(){cl();TOK='';lsSet('tok','');loginView('Sessão expirada. Entre novamente. Registros pendentes continuam guardados neste aparelho.')}
+function logout(){if(Q.length){msg('Há registros ainda não enviados. Aguarde o envio (o cabeçalho deve ficar sem “pendente”) antes de sair.','#c98f00');return}
+ TOK='';USR=null;SRV=[];S.p=[];DR={};lsSet('tok','');lsSet('usr','null');lsSet('cache','[]');saveDR();V={v:'home',id:null,f:'Todos'};LMODE='in';loginView()}
+function wide(){const m=document.querySelector('#ov .md');if(m)m.style.maxWidth='780px'}
+function adm(){modal('#0b5cab','Usuários','<p class="mu">Carregando…</p>');wide();
+ api('listUsers',[]).then(u=>{const c=document.querySelector('#ov .c');if(!c)return;
+  c.innerHTML=`<div class="scroll"><table><tr><th>Nome</th><th>Registro</th><th>Situação</th><th>Último acesso</th><th></th></tr>${u.map(x=>{const eu=x.registro==USR.registro;return`<tr><td style="text-align:left;white-space:normal">${esc(x.nome)}</td><td>${esc(x.registro)}</td><td>${esc(x.status)}${x.perfil=='admin'?' (adm)':''}</td><td>${esc(x.ultimo)}</td><td>${eu?'':x.status=='ativo'?`<button onclick="admSet('${x.chave}','inativo')">Desativar</button>`:`<button class="p" onclick="admSet('${x.chave}','ativo')">${x.status=='pendente'?'Aprovar':'Reativar'}</button>`}</td></tr>`}).join('')}</table></div><button style="width:100%;margin-top:10px" onclick="cl()">Fechar</button>`}).catch(e=>msg(e.message))}
+function admSet(ch,s){api('setUserStatus',[ch,s]).then(()=>{cl();adm()}).catch(e=>msg(e.message))}
+function aud(){modal('#0b5cab','Auditoria — últimas 60 alterações','<p class="mu">Carregando…</p>');wide();
+ api('listAuditoria',[]).then(a=>{const c=document.querySelector('#ov .c');if(!c)return;
+  c.innerHTML=`<div class="scroll"><table><tr><th>Quando</th><th>Profissional</th><th>Ação</th><th>Paciente</th><th>Antes → Depois</th></tr>${a.map(x=>`<tr><td>${esc(x.quando)}</td><td style="white-space:normal;text-align:left">${esc(x.usuario)}<br><span class="mu">${esc(x.registro)}</span></td><td style="white-space:normal;text-align:left">${esc(x.acao)}</td><td>${esc(x.paciente)}</td><td style="white-space:normal;text-align:left;font-size:11px">${esc(x.antes)}${x.antes&&x.depois?' → ':''}${esc(x.depois)}</td></tr>`).join('')}</table></div><p class="mu">O histórico completo fica na aba “Auditoria” da planilha.</p><button style="width:100%;margin-top:10px" onclick="cl()">Fechar</button>`}).catch(e=>msg(e.message))}
 function cleanIni(s){return String(s||'').trim().toUpperCase().replace(/[^A-Z0-9ÀÁÂÃÇÉÊÍÓÔÕÚ. -]/g,'').slice(0,5)}
 function sv(){const i=cleanIni($('ni').value),l=$('nl').value.trim().replace(/[^A-Za-z0-9 ._-]/g,'').slice(0,10),s=$('ns').value;if(!i||!l){msg('Preencha as iniciais e o leito.','#c98f00');return}
  const pid='p'+rid().slice(1);cl();enq({op:'addP',fn:'addPatient',pid,a:{ini:i,leito:l,setor:s},args:[i,l,s,pid]})}
@@ -153,26 +188,26 @@ function regB(){const p=pt(),g=a=>a.reduce((s,[i])=>s+(n('b_'+i)||0),0),itens=[]
  const so=t=>itens.filter(i=>i.t==t).reduce((s,i)=>s+i.ml,0),x={inf:g(_I)+so('E'),eli:g(_E)+so('S'),diu:n('b_diu')||0,itens};
  if(!x.inf&&!x.eli){msg('Preencha ao menos um valor de entrada ou saída.','#c98f00');return}
  XT={E:[],S:[]};clearDraft(p.id,k=>k.startsWith('b_')||k=='XT');
- const id=rid(),ts=Date.now();enq({op:'addB',fn:'addBalance',pid:p.id,rid:id,ts,h:now(),x,args:[p.id,x,id,ts]})}
+ const id=rid(),ts=Date.now();enq({op:'addB',fn:'addBalance',pid:p.id,rid:id,ts,h:now(),por:me(),x,args:[p.id,x,id,ts]})}
 function regV(){const p=pt(),x={t:n('t'),fr:n('fr'),fc:n('fc'),pas:n('pas'),pad:n('pad'),sp:n('sp'),o2:$('o2').value=='1',esc:+$('esc').value,cv:$('cv').value=='1',hgt:n('hgt'),rub:$('rub').value.trim()};
  if(['t','fr','fc','pas','pad','sp','hgt'].every(k=>x[k]===null)){msg('Preencha ao menos um sinal vital.','#c98f00');return}
  lsSet('rub',x.rub);const falta=[['t','Temp'],['fr','FR'],['fc','FC'],['pas','PAS'],['sp','SpO₂']].filter(([k])=>x[k]===null).map(a=>a[1]),r=falta.length?null:news(x);
  clearDraft(p.id,k=>['t','fr','fc','pas','pad','sp','hgt','o2','esc','cv','rub'].includes(k));
- const id=rid(),ts=Date.now();enq({op:'addV',fn:'addVitals',pid:p.id,rid:id,ts,h:now(),x,args:[p.id,x,id,ts]});
+ const id=rid(),ts=Date.now();enq({op:'addV',fn:'addVitals',pid:p.id,rid:id,ts,h:now(),por:me(),x,args:[p.id,x,id,ts]});
  if(!r){modal('#5b6b7b','Sinais vitais registrados',`<p>NEWS2 não calculado: faltam ${falta.join(', ')}.</p><button class="p" style="width:100%" onclick="cl()">OK</button>`);return}
  const L=lvl(r.tot,r.any3),par=Object.entries(r.P).filter(([k,v])=>v>0).map(([k,v])=>`${k}: ${v}`).join(' · ')||'Nenhum';
  if(L>=1){const c=REC[L];modal(['','#c98f00','#ef7d00','#d32f2f'][L],`⚠ NEWS2 = ${r.tot} — ${c[0]}`,`<p><b>Paciente ${p.ini} · Leito ${p.leito} · ${p.setor}</b></p><p class="mu">Parâmetros pontuados: ${par}</p><ul><li>${c[1]}</li><li>${c[2]}</li></ul><button class="p" style="width:100%" onclick="cl()">Ciente</button>`)}
  else modal('#1e8e3e',`NEWS2 = ${r.tot}`,`<p>${r.tot?REC[0][1]+' '+REC[0][2]:'Risco baixo (0). Manter monitorização de rotina (mín. a cada 12 h).'}</p><button class="p" style="width:100%" onclick="cl()">OK</button>`)}
 function findRec(k,r){const p=pt();return p&&(k=='V'?p.vit:p.bal).find(x=>x.rid==r)}
 function editV(r){const x=findRec('V',r);if(!x)return;const f=(i,l,v)=>`<div><label>${l}</label><input id="e_${i}" type="number" step="any" inputmode="decimal" value="${v==null?'':v}"></div>`;
- modal('#0b5cab','Editar sinais vitais — '+x.h,`<div class="grid">${f('t','Temp °C',x.t)}${f('fr','FR',x.fr)}${f('fc','FC',x.fc)}${f('pas','PAS',x.pas)}${f('pad','PAD',x.pad)}${f('sp','SpO₂',x.sp)}${f('hgt','HGT',x.hgt)}</div>
+ modal('#0b5cab','Editar sinais vitais — '+x.h,`<p class="mu">Registrado por ${esc(x.por||'—')}${x.ed&&x.ed!='editado agora'?' · última edição: '+esc(x.ed):''}</p><div class="grid">${f('t','Temp °C',x.t)}${f('fr','FR',x.fr)}${f('fc','FC',x.fc)}${f('pas','PAS',x.pas)}${f('pad','PAD',x.pad)}${f('sp','SpO₂',x.sp)}${f('hgt','HGT',x.hgt)}</div>
  <div class="grid" style="margin-top:8px"><div><label>O₂ suplementar</label><select id="e_o2"><option value="0">Ar ambiente</option><option value="1" ${x.o2?'selected':''}>Em uso de O₂</option></select></div><div><label>Escala SpO₂</label><select id="e_esc"><option value="1">1 (padrão)</option><option value="2" ${x.esc==2?'selected':''}>2 (hipercapnia)</option></select></div><div><label>Consciência</label><select id="e_cv"><option value="0">Alerta</option><option value="1" ${x.cv?'selected':''}>Confuso/Voz/Dor/Não resp.</option></select></div><div><label>Rubrica</label><input id="e_rub" maxlength="8" value="${esc(x.rub||'')}"></div></div>
  <div class="row" style="margin-top:12px"><button onclick="cl()">Cancelar</button><button onclick="askDel('V','${r}')" style="color:var(--r)">Excluir</button><button class="p sp" onclick="saveV('${r}')">Salvar alteração</button></div>`)}
 function saveV(r){const x={t:n('e_t'),fr:n('e_fr'),fc:n('e_fc'),pas:n('e_pas'),pad:n('e_pad'),sp:n('e_sp'),hgt:n('e_hgt'),o2:$('e_o2').value=='1',esc:+$('e_esc').value,cv:$('e_cv').value=='1',rub:$('e_rub').value.trim()};
  if(['t','fr','fc','pas','pad','sp','hgt'].every(k=>x[k]===null)){msg('Preencha ao menos um sinal vital.','#c98f00');return}
  const pid=V.id;cl();enq({op:'updV',fn:'updateVitals',pid,rid:r,x,args:[r,x]})}
 function editB(r){const x=findRec('B',r);if(!x)return;const f=(i,l,v)=>`<div><label>${l}</label><input id="e_${i}" type="number" step="any" inputmode="decimal" value="${v==null?'':v}"></div>`;
- modal('#0b5cab','Editar lançamento do balanço — '+x.h,`<div class="grid">${f('inf','Infundido (mL)',x.inf)}${f('eli','Eliminado (mL)',x.eli)}${f('diu','Diurese (mL)',x.diu)}</div><p class="mu">Os valores acima são os totais deste lançamento (já incluem os itens extras${(x.itens||[]).length?': '+(x.itens||[]).map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; '):''}).</p>
+ modal('#0b5cab','Editar lançamento do balanço — '+x.h,`<p class="mu">Registrado por ${esc(x.por||'—')}${x.ed&&x.ed!='editado agora'?' · última edição: '+esc(x.ed):''}</p><div class="grid">${f('inf','Infundido (mL)',x.inf)}${f('eli','Eliminado (mL)',x.eli)}${f('diu','Diurese (mL)',x.diu)}</div><p class="mu">Os valores acima são os totais deste lançamento (já incluem os itens extras${(x.itens||[]).length?': '+(x.itens||[]).map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; '):''}).</p>
  <div class="row" style="margin-top:12px"><button onclick="cl()">Cancelar</button><button onclick="askDel('B','${r}')" style="color:var(--r)">Excluir</button><button class="p sp" onclick="saveB('${r}')">Salvar alteração</button></div>`)}
 function saveB(r){const x={inf:n('e_inf')||0,eli:n('e_eli')||0,diu:n('e_diu')||0};const pid=V.id;cl();enq({op:'updB',fn:'updateBalance',pid,rid:r,x,args:[r,x]})}
 function askDel(k,r){cl();modal('#d32f2f','Excluir registro?',`<p>Este registro será apagado para toda a equipe e não dá para desfazer.</p><div class="row"><button class="sp" onclick="cl()">Cancelar</button><button class="p sp" style="background:var(--r);border-color:var(--r)" onclick="doDel('${k}','${r}')">Excluir</button></div>`)}
@@ -180,7 +215,7 @@ function doDel(k,r){const pid=V.id;cl();enq({op:k=='V'?'delV':'delB',fn:k=='V'?'
 function prt(pre){const d=new Date();if(d.getHours()<7)d.setDate(d.getDate()-1);const ds=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
  modal('#0b5cab','Imprimir plantão',`<label>Paciente</label><select id="pt_p"><option value="">Todos do setor escolhido abaixo</option>${S.p.map(p=>`<option value="${p.id}" ${p.id==pre?'selected':''}>${p.ini} · Leito ${p.leito} · ${p.setor}</option>`).join('')}</select><label style="margin-top:8px">Plantão</label><select id="pt_t"><option value="0">${TURNOS[0][0]}</option><option value="1">${TURNOS[1][0]}</option><option value="2">Os dois: diurno + noturno (com resumo 24 h)</option><option value="3">Últimas 48 h (tudo o que o app guarda)</option></select>
  <label style="margin-top:8px">Data de início do plantão</label><input type="date" id="pt_d" value="${ds}">
- <label style="margin-top:8px">Profissional (nome e COREN)</label><input id="pt_n" value="${(lsGet('pnome')||'').replace(/"/g,'')}">
+ <label style="margin-top:8px">Profissional (nome e COREN)</label><input id="pt_n" value="${esc(me())}" readonly>
  <label style="margin-top:8px">Setor (usado quando não escolher um paciente)</label><select id="pt_s"><option>Todos</option>${SETORES.map(s=>`<option ${s==V.f?'selected':''}>${s}</option>`).join('')}</select>
  <p class="mu" style="margin:8px 0 0">O noturno começa às 19h da data escolhida e termina às 7h do dia seguinte. O app guarda as últimas 48 h.</p>
  <div class="row" style="margin-top:12px"><button class="sp" onclick="cl()">Cancelar</button><button class="p sp" onclick="doPrint()">Imprimir</button></div>`)}
@@ -190,14 +225,14 @@ function sheet(){const sel=+$('pt_t').value,st=$('pt_s').value,pid=$('pt_p').val
  const win=i=>{if(i==3){const t=Date.now();return{tn:'Últimas 48 h (todo o período guardado no app)',s0:t-48*36e5,e0:t}}const [tn,a,b]=TURNOS[i],s0=new Date(ds[0],ds[1]-1,ds[2],a,0,0).getTime();return{tn,s0,e0:s0+(((b-a+24)%24)||24)*36e5}};
  const stat=(p,w)=>{const inS=ts=>ts>=w.s0&&ts<w.e0,v=(p.vit||[]).filter(x=>inS(x.ts)),bl=(p.bal||[]).filter(x=>inS(x.ts));
   return{v,bl,O:bl.flatMap(x=>x.itens||[]),I:bl.reduce((s,x)=>s+x.inf,0),E:bl.reduce((s,x)=>s+x.eli,0),D:bl.reduce((s,x)=>s+(x.diu||0),0)}};
- const sg=`<div style="display:flex;gap:28px;margin-top:8px;break-inside:avoid"><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">${nm.replace(/</g,'&lt;')||'Nome e COREN do profissional'}</div><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">Assinatura</div></div>`;
+ const sg=`<div style="font-size:9px;margin-top:4px">* registro editado após o lançamento (histórico de alterações guardado na auditoria do sistema).</div><div style="display:flex;gap:28px;margin-top:8px;break-inside:avoid"><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">${nm.replace(/</g,'&lt;')||'Nome e COREN do profissional'}</div><div style="flex:1;margin-top:32px;border-top:1px solid #000;padding-top:3px">Assinatura</div></div>`;
  const hd=(t,w)=>`<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:8px"><img src="${LOGO}" alt="HOSPESC"><div><b style="font-size:15px">${t}</b><br>Período: ${fmt(w.s0)} a ${fmt(w.e0)}<br>Setor: ${stl} · Impresso em ${new Date().toLocaleString('pt-BR')}</div></div>`;
  const sg2=v=>(v>0?'+':'')+v,e_=v=>v==null?'':v,hh=x=>sel==3?new Date(x.ts).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):x.h;
  const part=(i,k)=>{const w=win(i);
   return`<div style="${k?'break-before:page;':''}">`+hd('Balanço hídrico + NEWS2 — '+(i==3?'':'Plantão ')+w.tn,w)+(pid?'<div style="border:1px dashed #666;height:58px;margin-bottom:8px;padding:4px;font-size:10px">Etiqueta do paciente / nº do prontuário</div>':'')+
   (L.map(p=>{const {v,bl,O,I,E,D}=stat(p,w);
    return`<div class="pp"><b>${p.ini} · Leito ${p.leito} · ${p.setor}</b>`+
-   (v.length?`<table style="width:100%;border-collapse:collapse"><tr><th>Hora</th><th>T</th><th>FR</th><th>FC</th><th>PA</th><th>PAM</th><th>SpO₂</th><th>HGT</th><th>NEWS2</th><th>Rubrica</th></tr>${v.map(x=>`<tr><td>${hh(x)}</td><td>${e_(x.t)}</td><td>${e_(x.fr)}</td><td>${e_(x.fc)}</td><td>${x.pas==null&&x.pad==null?'':e_(x.pas)+'/'+e_(x.pad)}</td><td>${e_(x.pam)}</td><td>${e_(x.sp)}</td><td>${e_(x.hgt)}</td><td>${e_(x.tot)}</td><td>${x.rub||''}</td></tr>`).join('')}</table>`:'<div>Sem sinais vitais no plantão.</div>')+
+   (v.length?`<table style="width:100%;border-collapse:collapse"><tr><th>Hora</th><th>T</th><th>FR</th><th>FC</th><th>PA</th><th>PAM</th><th>SpO₂</th><th>HGT</th><th>NEWS2</th><th>Rubrica</th><th>Reg. profissional</th></tr>${v.map(x=>`<tr><td>${hh(x)}${x.ed?'*':''}</td><td>${e_(x.t)}</td><td>${e_(x.fr)}</td><td>${e_(x.fc)}</td><td>${x.pas==null&&x.pad==null?'':e_(x.pas)+'/'+e_(x.pad)}</td><td>${e_(x.pam)}</td><td>${e_(x.sp)}</td><td>${e_(x.hgt)}</td><td>${e_(x.tot)}</td><td>${x.rub||''}</td><td>${(x.por||'').split(' · ')[1]||''}</td></tr>`).join('')}</table>`:'<div>Sem sinais vitais no plantão.</div>')+
    (pid&&bl.length?`<table style="width:100%;border-collapse:collapse;margin-top:4px"><tr><th>Hora</th><th>Infundido (mL)</th><th>Eliminado (mL)</th><th>Diurese (mL)</th><th>Outros</th></tr>${bl.map(b=>`<tr><td>${hh(b)}</td><td>${b.inf}</td><td>${b.eli}</td><td>${b.diu||0}</td><td style="text-align:left">${(b.itens||[]).map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; ')}</td></tr>`).join('')}</table>`:'')+`<div style="margin-top:3px">Infundido: <b>${I}</b> mL · Eliminado: <b>${E}</b> mL (diurese ${D} mL) · Balanço do plantão: <b>${sg2(I-E)}</b> mL${O.length?'<br>Outros: '+O.map(i=>(i.t=='E'?'+':'−')+i.ml+' '+esc(i.nome)).join('; '):''}</div></div>`}).join('')||'<p>Nenhum paciente.</p>')+sg+`</div>`};
  const resumo=()=>{const w0=win(0),w1=win(1),w={s0:w0.s0,e0:w1.e0};let T={dI:0,dE:0,nI:0,nE:0,I:0,E:0,D:0};
   const rows=L.map(p=>{const a=stat(p,w0),b=stat(p,w1),I=a.I+b.I,E=a.E+b.E,D=a.D+b.D;T.dI+=a.I;T.dE+=a.E;T.nI+=b.I;T.nE+=b.E;T.I+=I;T.E+=E;T.D+=D;
